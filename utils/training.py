@@ -2,16 +2,20 @@ import torch
 from torch.utils.data import DataLoader
 from torch.optim import SGD
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+# from sklearn.metrics import classification_report
+from seqeval.metrics import classification_report, f1_score
 
-LEARNING_RATE = 5e-3
-EPOCHS = 5
-BATCH_SIZE = 32
+LEARNING_RATE = 5e-5
+EPOCHS = 20
+BATCH_SIZE = 128
 
-def train_loop(model, train_dataset, val_dataset):
+def train_loop(model, train_dataset, val_dataset, dict):
+    
 
-
-    train_dataloader = DataLoader(train_dataset, num_workers=4, batch_size=BATCH_SIZE, shuffle=True)
-    val_dataloader = DataLoader(val_dataset, num_workers=4, batch_size=BATCH_SIZE)
+    writer = SummaryWriter()
+    train_dataloader = DataLoader(train_dataset, num_workers=4, batch_size=BATCH_SIZE, drop_last=True, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, num_workers=4, batch_size=BATCH_SIZE, drop_last=False)
 
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
@@ -21,69 +25,77 @@ def train_loop(model, train_dataset, val_dataset):
     if use_cuda:
         model = model.cuda()
 
-    best_acc = 0
-    best_loss = 1000
-
-    for epoch_num in range(EPOCHS):
-
-        total_acc_train = 0
-        total_loss_train = 0
-
-        model.train()
-
-        for train_data, train_label in tqdm(train_dataloader):
-
+    count=1 
+    for epoch_num in range(EPOCHS):      
+        
+        print("epoch ", epoch_num+1, "/", EPOCHS)
+    
+        model.train()     
+        loss_scalar=0
+        tqdm_data=tqdm(train_dataloader)
+        for train_data, train_label in tqdm_data:      # iterate on batches of dataloaders
+            
+            tqdm_data.set_postfix(loss=loss_scalar, refresh=False)
             train_label = train_label.to(device)
             mask = train_data['attention_mask'].squeeze(1).to(device)
             input_id = train_data['input_ids'].squeeze(1).to(device)
 
             optimizer.zero_grad()
-            loss, logits = model(input_id, mask, train_label)
+            loss, logits = model(input_ids=input_id, attention_mask=mask, labels=train_label, return_dict=False)
+            
+            y_train_true=[]
+            y_train_pred=[]
 
-            for i in range(logits.shape[0]):
+            for i in range(BATCH_SIZE):                # iterate on elements of a single batch (batch_size=logits.shape()[0])
+                
+                logits_clean = logits[i][train_label[i] != -100]
+                label_clean = train_label[i][train_label[i] != -100]
 
-              logits_clean = logits[i][train_label[i] != -100]
-              label_clean = train_label[i][train_label[i] != -100]
+                predictions = logits_clean.argmax(dim=1)
+                y_train_true.append(label_clean.tolist())  
+                y_train_pred.append(predictions.tolist())
+                            
+            if count%10==0: 
+                writer.add_scalar('batch_loss/train', loss.item(), count)
 
-              predictions = logits_clean.argmax(dim=1)
-              acc = (predictions == label_clean).float().mean()
-              total_acc_train += acc
-              total_loss_train += loss.item()
-
+            loss_scalar=loss.item()
             loss.backward()
             optimizer.step()
+            count+=1
         
-        train_accuracy = total_acc_train / len(train_dataset)
-        train_loss = total_loss_train / len(train_dataset)
-
         model.eval()
 
-        total_acc_val = 0
-        total_loss_val = 0
-
+        y_val_true=[]
+        y_val_pred=[]
+        
         for val_data, val_label in val_dataloader:
 
             val_label = val_label.to(device)
             mask = val_data['attention_mask'].squeeze(1).to(device)
             input_id = val_data['input_ids'].squeeze(1).to(device)
 
-            loss, logits = model(input_id, mask, val_label)
+            loss, logits = model(input_ids=input_id, attention_mask=mask, labels=val_label, return_dict=False)
 
             for i in range(logits.shape[0]):
 
-              logits_clean = logits[i][val_label[i] != -100]
-              label_clean = val_label[i][val_label[i] != -100]
-
-              predictions = logits_clean.argmax(dim=1)
-              acc = (predictions == label_clean).float().mean()
-              total_acc_val += acc
-              total_loss_val += loss.item()
-
-        val_accuracy = total_acc_val / len(val_dataset)
-        val_loss = total_loss_val / len(val_dataset)
-
-        print(
-            f'Epochs: {epoch_num + 1} | Loss: {train_loss: .3f} | Accuracy: {train_accuracy: .3f} | Val_Loss: {val_accuracy: .3f} | Accuracy: {val_loss: .3f}')
+                logits_clean = logits[i][val_label[i] != -100]
+                label_clean = val_label[i][val_label[i] != -100]
+                
+                predictions = logits_clean.argmax(dim=1)
+                y_val_true.append(label_clean.tolist())  
+                y_val_pred.append(predictions.tolist())
+        
+        writer.flush()
+        writer.close() 
+        
+        true=[dict.transform_ids_to_labels(sent) for sent in y_val_true]
+        pred=[dict.transform_ids_to_labels(sent) for sent in y_val_pred]
+        
+        score = f1_score(true, pred)
+        print(' - f1: {:04.2f}'.format(score * 100))
+        print(classification_report(true,pred))
+        
+        
 
 
 
