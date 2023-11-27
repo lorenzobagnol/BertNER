@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 from seqeval.metrics import classification_report, f1_score
 
 LEARNING_RATE = 5e-5
-EPOCHS = 20
+EPOCHS = 1
 BATCH_SIZE = 128
 
 def train_loop(model, train_dataset, val_dataset, dict):
@@ -46,7 +46,7 @@ def train_loop(model, train_dataset, val_dataset, dict):
             y_train_true=[]
             y_train_pred=[]
 
-            for i in range(BATCH_SIZE):                # iterate on elements of a single batch (batch_size=logits.shape()[0])
+            for i in range(BATCH_SIZE):                # iterate on elements of a single batch (batch_size=logits.shape[0])
                 
                 logits_clean = logits[i][train_label[i] != -100]
                 label_clean = train_label[i][train_label[i] != -100]
@@ -84,18 +84,15 @@ def train_loop(model, train_dataset, val_dataset, dict):
                 predictions = logits_clean.argmax(dim=1)
                 y_val_true.append(label_clean.tolist())  
                 y_val_pred.append(predictions.tolist())
-        
-        writer.flush()
-        writer.close() 
+         
         
         true=[dict.transform_ids_to_labels(sent) for sent in y_val_true]
         pred=[dict.transform_ids_to_labels(sent) for sent in y_val_pred]
         
         score = f1_score(true, pred)
         print(' - f1: {:04.2f}'.format(score * 100))
-        print(classification_report(true,pred))
-        
-        
+        print(classification_report(true, pred))
 
-
+    writer.flush()
+    writer.close()
 
